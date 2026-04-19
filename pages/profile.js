@@ -1,80 +1,144 @@
-import React, { useEffect, useMemo, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
+import { useState, useEffect, useMemo } from 'react';
+import { FaUserEdit, FaCloud, FaMapMarkerAlt, FaCalendarAlt, FaMoon, FaSun, FaSignOutAlt, FaTrashAlt, FaPlus, FaTimes } from 'react-icons/fa';
+import { supabase } from '../lib/supabaseClient';
 import Sidebar from '../components/Sidebar';
 import profileStyles from '../styles/profile.module.css';
 import eventStyles from '../styles/event.module.css';
-import { FaCloud, FaDollarSign, FaMoon, FaSignOutAlt, FaSun, FaTrashAlt, FaUserEdit } from 'react-icons/fa';
-import { supabase } from '../lib/supabaseClient';
-
-const fallbackUser = {
-  full_name: 'Skies User',
-  email: 'traveler@example.com',
-  travel_preferences: {
-    environment: 'Both',
-    pace: 'Relaxed',
-    budget: 1500,
-    email_updates: true
-  },
-  saved_locations: [
-    { id: '1', name: 'Fort San Pedro', type: 'Historical' },
-    { id: '2', name: 'Cebu Ocean Park', type: 'Attraction' }
-  ],
-  saved_itineraries: [
-    { id: '1', name: 'Cebu South Trip', date: 'March 4-7, 2026' },
-    { id: '2', name: 'City Tour', date: 'April 10, 2026' }
-  ],
-  analytics: {
-    trips_taken: 5,
-    places_visited: 24,
-    most_visited: 'Cebu City'
-  }
-};
 
 const THEME_STORAGE_KEY = 'schedule-skies-theme';
 
-const OptionSelect = ({ label, options, selected, onSelect }) => (
-  <div className={profileStyles.option_group}>
-    <span className={profileStyles.option_label}>{label}</span>
-    <div className={profileStyles.options_container}>
-      {options.map(opt => (
-        <button 
-          type="button"
-          key={opt}
-          className={`${profileStyles.option_btn} ${selected === opt ? profileStyles.option_active : ''}`}
-          onClick={() => onSelect(opt)}
-        >
-          {opt}
-        </button>
+// Skeleton Loading Component
+const SkeletonLoader = ({ count = 1, type = 'card' }) => {
+  return (
+    <>
+      {[...Array(count)].map((_, i) => (
+        <div key={i} className={profileStyles.skeleton} style={{ marginBottom: '1rem' }}>
+          <div className={profileStyles.skeletonLine} style={{ width: '60%' }}></div>
+          <div className={profileStyles.skeletonLine} style={{ width: '80%', marginTop: '0.5rem' }}></div>
+        </div>
       ))}
-    </div>
+    </>
+  );
+};
+
+// Empty State Component
+const EmptyState = ({ icon: Icon, title, description, actionText, onAction }) => (
+  <div className={profileStyles.emptyState}>
+    {Icon && <Icon className={profileStyles.emptyIcon} />}
+    <h4>{title}</h4>
+    <p>{description}</p>
+    {actionText && onAction && (
+      <button className={profileStyles.emptyAction} onClick={onAction}>
+        <FaPlus /> {actionText}
+      </button>
+    )}
   </div>
 );
+
+// Location Item Component
+const LocationItem = ({ location, onDelete, isDeleting }) => (
+  <div className={profileStyles.listItem}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+      <FaMapMarkerAlt style={{ color: '#2563eb', fontSize: '0.85rem' }} />
+      <h4 style={{ margin: 0, fontSize: '1rem' }}>{location.name}</h4>
+    </div>
+    <span className={profileStyles.metaText}>{location.type}</span>
+    {location.description && <p style={{ margin: '0.3rem 0 0', fontSize: '0.85rem', color: '#666' }}>{location.description}</p>}
+    <button 
+      className={profileStyles.deleteBtn}
+      onClick={() => onDelete(location.id)}
+      disabled={isDeleting}
+      title="Delete location"
+    >
+      <FaTimes />
+    </button>
+  </div>
+);
+
+// Itinerary Item Component
+const ItineraryItem = ({ itinerary, onDelete, isDeleting }) => {
+  const formatDateRange = (start, end) => {
+    try {
+      const s = new Date(start);
+      const e = new Date(end);
+      return `${s.toLocaleDateString('en-PH')} - ${e.toLocaleDateString('en-PH')}`;
+    } catch {
+      return `${start} - ${end}`;
+    }
+  };
+
+  return (
+    <div className={profileStyles.listItem}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+        <FaCalendarAlt style={{ color: '#2563eb', fontSize: '0.85rem' }} />
+        <h4 style={{ margin: 0, fontSize: '1rem' }}>{itinerary.name}</h4>
+      </div>
+      <span className={profileStyles.metaText}>{formatDateRange(itinerary.start_date, itinerary.end_date)}</span>
+      {itinerary.budget_php && (
+        <span className={profileStyles.metaText}>₱{itinerary.budget_php.toLocaleString('en-PH')}</span>
+      )}
+      {itinerary.description && <p style={{ margin: '0.3rem 0 0', fontSize: '0.85rem', color: '#666' }}>{itinerary.description}</p>}
+      <span style={{ display: 'inline-block', fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: '#e0e7ff', color: '#3730a3', borderRadius: '4px', marginTop: '0.3rem' }}>
+        {itinerary.status}
+      </span>
+      <button 
+        className={profileStyles.deleteBtn}
+        onClick={() => onDelete(itinerary.id)}
+        disabled={isDeleting}
+        title="Delete itinerary"
+      >
+        <FaTimes />
+      </button>
+    </div>
+  );
+};
+
 
 const ProfilePage = () => {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('Preferences');
-  const [userData, setUserData] = useState(fallbackUser);
-  const [authUserId, setAuthUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('success');
   const [themeMode, setThemeMode] = useState('light');
 
+  // Profile Data
   const [fullName, setFullName] = useState('');
-  const [budget, setBudget] = useState(2);
+  const [email, setEmail] = useState('');
+  const [budgetPhp, setBudgetPhp] = useState(5000);
   const [environment, setEnvironment] = useState('Both');
   const [pace, setPace] = useState('Relaxed');
   const [emailUpdates, setEmailUpdates] = useState(true);
+
+  // Lists & Analytics
+  const [locations, setLocations] = useState([]);
+  const [itineraries, setItineraries] = useState([]);
+  const [analytics, setAnalytics] = useState({
+    trips_taken: 0,
+    places_visited: 0,
+    most_visited_city: null
+  });
+  const [authUserId, setAuthUserId] = useState('');
+  const [sessionToken, setSessionToken] = useState('');
+
+  // Delete operations
+  const [deletingLocationId, setDeletingLocationId] = useState(null);
+  const [deletingItineraryId, setDeletingItineraryId] = useState(null);
+
+  // Password change
   const [newPassword, setNewPassword] = useState('');
   const [securityLoading, setSecurityLoading] = useState(false);
 
   const showMessage = (type, value) => {
     setMessageType(type);
     setMessage(value);
+    setTimeout(() => setMessage(''), 4000);
   };
 
+  // Load theme preference
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
     if (savedTheme === 'dark' || savedTheme === 'light') {
@@ -82,12 +146,14 @@ const ProfilePage = () => {
     }
   }, []);
 
+  // Persist theme
   useEffect(() => {
     localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
 
+  // Fetch profile data on mount
   useEffect(() => {
-    const fetchUserData = async () => {
+    const fetchProfileData = async () => {
       try {
         const { data: authData, error: userError } = await supabase.auth.getUser();
         const authUser = authData?.user;
@@ -98,98 +164,135 @@ const ProfilePage = () => {
         }
 
         setAuthUserId(authUser.id);
+        setEmail(authUser.email || '');
 
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', authUser.id)
-          .maybeSingle();
-
-        const resolvedName =
-          profile?.full_name ||
-          authUser.user_metadata?.full_name ||
-          authUser.email?.split('@')[0] ||
-          'User';
-
-        const mergedUser = {
-          ...fallbackUser,
-          ...profile,
-          full_name: resolvedName,
-          email: authUser.email || fallbackUser.email
-        };
-
-        setUserData(mergedUser);
-        setFullName(mergedUser.full_name);
-        if (mergedUser.travel_preferences) {
-          const loadedBudget = mergedUser.travel_preferences.budget;
-          let newBudgetLevel = 2;
-          if (loadedBudget) {
-            if (loadedBudget <= 5) newBudgetLevel = loadedBudget;
-            else if (loadedBudget < 500) newBudgetLevel = 1;
-            else if (loadedBudget < 1000) newBudgetLevel = 2;
-            else if (loadedBudget < 2000) newBudgetLevel = 3;
-            else if (loadedBudget < 5000) newBudgetLevel = 4;
-            else newBudgetLevel = 5;
-          }
-          setBudget(newBudgetLevel);
-          setEnvironment(mergedUser.travel_preferences.environment || 'Both');
-          setPace(mergedUser.travel_preferences.pace || 'Relaxed');
-          setEmailUpdates(
-            typeof mergedUser.travel_preferences.email_updates === 'boolean'
-              ? mergedUser.travel_preferences.email_updates
-              : true
-          );
+        // Get session token for API calls
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (token) {
+          setSessionToken(token);
         }
+
+        // Fetch complete profile with relations
+        const res = await fetch('/api/profile', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to fetch profile: ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Set profile fields
+        setFullName(data.profile?.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User');
+        setBudgetPhp(data.profile?.budget_php || 5000);
+        setEnvironment(data.profile?.environment || 'Both');
+        setPace(data.profile?.pace || 'Relaxed');
+        setEmailUpdates(data.profile?.email_updates !== false);
+
+        // Set lists and analytics
+        setLocations(data.saved_locations || []);
+        setItineraries(data.saved_itineraries || []);
+        setAnalytics(data.analytics || {
+          trips_taken: 0,
+          places_visited: 0,
+          most_visited_city: null
+        });
       } catch (err) {
-        console.log('Fetching user data failed, using fallback:', err.message);
-        setUserData(fallbackUser);
-        setFullName(fallbackUser.full_name);
-        setBudget(3);
-        setEnvironment(fallbackUser.travel_preferences.environment);
-        setPace(fallbackUser.travel_preferences.pace);
-        setEmailUpdates(fallbackUser.travel_preferences.email_updates);
+        console.error('Error fetching profile:', err.message);
+        showMessage('error', 'Failed to load profile. Please refresh.');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchUserData();
+    fetchProfileData();
   }, [router]);
 
-  const profileStats = useMemo(() => {
-    const itineraries = userData?.saved_itineraries?.length || 0;
-    const locations = userData?.saved_locations?.length || 0;
-    return { itineraries, locations };
-  }, [userData]);
-
   const handleSaveProfile = async () => {
-    if (!authUserId) return;
+    if (!authUserId || !sessionToken) return;
 
     setSaving(true);
     setMessage('');
 
-    const payload = {
-      id: authUserId,
-      full_name: fullName.trim(),
-      travel_preferences: {
-        budget: Number(budget),
-        environment,
-        pace,
-        email_updates: emailUpdates
-      },
-      updated_at: new Date().toISOString()
-    };
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({
+          full_name: fullName.trim(),
+          budget_php: Number(budgetPhp),
+          environment,
+          pace,
+          email_updates: emailUpdates
+        })
+      });
 
-    const { error } = await supabase.from('profiles').upsert(payload);
-    setSaving(false);
+      if (!res.ok) {
+        throw new Error(`Failed to save: ${res.status}`);
+      }
 
-    if (error) {
-      showMessage('error', `Unable to save profile: ${error.message}`);
-      return;
+      showMessage('success', 'Profile preferences saved successfully.');
+    } catch (err) {
+      console.error('Save error:', err);
+      showMessage('error', err.message || 'Failed to save profile.');
+    } finally {
+      setSaving(false);
     }
+  };
 
-    setUserData((prev) => ({ ...prev, ...payload }));
-    showMessage('success', 'Profile preferences saved.');
+  const handleDeleteLocation = async (locationId) => {
+    if (!sessionToken) return;
+    
+    setDeletingLocationId(locationId);
+    try {
+      const res = await fetch('/api/saved-locations', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ id: locationId })
+      });
+
+      if (!res.ok) throw new Error('Failed to delete location');
+
+      setLocations(prev => prev.filter(loc => loc.id !== locationId));
+      showMessage('success', 'Location removed.');
+    } catch (err) {
+      showMessage('error', 'Failed to delete location.');
+    } finally {
+      setDeletingLocationId(null);
+    }
+  };
+
+  const handleDeleteItinerary = async (itineraryId) => {
+    if (!sessionToken) return;
+
+    setDeletingItineraryId(itineraryId);
+    try {
+      const res = await fetch('/api/saved-itineraries', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`
+        },
+        body: JSON.stringify({ id: itineraryId })
+      });
+
+      if (!res.ok) throw new Error('Failed to delete itinerary');
+
+      setItineraries(prev => prev.filter(itin => itin.id !== itineraryId));
+      showMessage('success', 'Itinerary removed.');
+    } catch (err) {
+      showMessage('error', 'Failed to delete itinerary.');
+    } finally {
+      setDeletingItineraryId(null);
+    }
   };
 
   const handleChangePassword = async () => {
@@ -200,16 +303,18 @@ const ProfilePage = () => {
 
     setSecurityLoading(true);
     setMessage('');
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setSecurityLoading(false);
+    
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw error;
 
-    if (error) {
-      showMessage('error', `Password update failed: ${error.message}`);
-      return;
+      setNewPassword('');
+      showMessage('success', 'Password updated successfully.');
+    } catch (err) {
+      showMessage('error', `Password update failed: ${err.message}`);
+    } finally {
+      setSecurityLoading(false);
     }
-
-    setNewPassword('');
-    showMessage('success', 'Password updated successfully.');
   };
 
   const handleLogout = async () => {
@@ -221,9 +326,7 @@ const ProfilePage = () => {
     const confirmDelete = window.prompt('Type DELETE to permanently remove your account.');
     if (confirmDelete !== 'DELETE') return;
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData?.session?.access_token;
-    if (!token) {
+    if (!sessionToken) {
       showMessage('error', 'Session expired. Please log in again.');
       return;
     }
@@ -231,30 +334,36 @@ const ProfilePage = () => {
     setSecurityLoading(true);
     setMessage('');
 
-    const response = await fetch('/api/delete-account', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
+    try {
+      const response = await fetch('/api/delete-account', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionToken}`
+        }
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result?.error || 'Failed to delete account.');
       }
-    });
 
-    const result = await response.json();
-    setSecurityLoading(false);
-
-    if (!response.ok) {
-      showMessage('error', result?.error || 'Failed to delete account.');
-      return;
+      await supabase.auth.signOut();
+      router.push('/signup');
+    } catch (err) {
+      showMessage('error', err.message);
+    } finally {
+      setSecurityLoading(false);
     }
-
-    await supabase.auth.signOut();
-    router.push('/signup');
   };
 
   if (loading) {
     return (
       <div className={profileStyles.loadingScreen}>
-        Loading profile...
+        <div style={{ textAlign: 'center' }}>
+          <div className={profileStyles.spinner}></div>
+          <p style={{ marginTop: '1rem', color: '#2c3e50' }}>Loading your profile...</p>
+        </div>
       </div>
     );
   }
@@ -262,206 +371,218 @@ const ProfilePage = () => {
   return (
     <>
       <Head>
-        <title>Account Profile</title>
+        <title>Account Profile - ScheduleSkies</title>
       </Head>
       <div className={eventStyles.appContainer}>
         <Sidebar />
         <main className={eventStyles.mainContent} style={{ padding: 0 }}>
-          {/* Sky Decorations */}
           <div className={eventStyles.sun}></div>
           <div className={`${eventStyles.cloud} ${eventStyles.cloud1}`}></div>
           <div className={`${eventStyles.cloud} ${eventStyles.cloud2}`}></div>
 
-          <header className={profileStyles.profile_header} style={{ marginLeft: 0, borderRadius: '0 0 30px 30px', marginBottom: '30px', position: 'relative', zIndex: 10, minHeight: '320px', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-            <div className={profileStyles.profile_picture} style={{ width: '120px', height: '120px', fontSize: '3rem', margin: '0 0 20px 0', boxShadow: '0 8px 24px rgba(0,0,0,0.2)' }}>
+          {/* Profile Header */}
+          <header className={profileStyles.profileHeader}>
+            <div className={profileStyles.profilePicture}>
               {(fullName || 'U').charAt(0).toUpperCase()}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <h1 style={{ fontSize: '3.5rem', fontWeight: '800', marginBottom: '10px', textShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>{fullName || 'GUEST'}</h1>
-              <span style={{ fontSize: '1.2rem', opacity: 0.9, color: '#fff', backgroundColor: 'rgba(0,0,0,0.2)', padding: '5px 15px', borderRadius: '20px' }}>{userData?.email}</span>
-              
-              <div className={profileStyles.quickStats} style={{ marginTop: '20px' }}>
-                <span style={{ fontSize: '1rem', padding: '8px 20px', background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>{profileStats.itineraries} itineraries</span>
-                <span style={{ fontSize: '1rem', padding: '8px 20px', background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.5)', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>{profileStats.locations} saved places</span>
+            <div className={profileStyles.profileInfo}>
+              <h1>{fullName || 'GUEST'}</h1>
+              <p className={profileStyles.profileEmail}>{email}</p>
+              <div className={profileStyles.quickStats}>
+                <span>{itineraries.length} itineraries</span>
+                <span>{locations.length} saved places</span>
+                <span>{analytics.trips_taken} trips</span>
               </div>
             </div>
           </header>
 
-          <div style={{ position: 'relative', zIndex: 10, flex: 1, display: 'flex', flexDirection: 'column', padding: '0 60px 40px 60px' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '30px', width: '100%' }}>
-              <div className={eventStyles.actionGroup} style={{ margin: 0, gap: '15px' }}>
-                <button 
-                  className={`${eventStyles.actionBtn} ${activeTab === 'Preferences' ? eventStyles.activeEditBtn : ''}`}
-                  onClick={() => setActiveTab('Preferences')}
-                  style={{ fontSize: '16px', padding: '10px 25px' }}
+          <div className={profileStyles.profileBody}>
+            {/* Tab Navigation */}
+            <div className={profileStyles.tabNav}>
+              {['Preferences', 'Itineraries & Locations', 'Analytics', 'Account'].map(tab => (
+                <button
+                  key={tab}
+                  className={`${profileStyles.tabBtn} ${activeTab === tab ? profileStyles.tabBtnActive : ''}`}
+                  onClick={() => setActiveTab(tab)}
                 >
-                  Preferences
+                  {tab}
                 </button>
-                <button 
-                  className={`${eventStyles.actionBtn} ${activeTab === 'Itineraries' ? eventStyles.activeEditBtn : ''}`}
-                  onClick={() => setActiveTab('Itineraries')}
-                  style={{ fontSize: '16px', padding: '10px 25px' }}
-                >
-                  Itineraries & Locations
-                </button>
-                <button 
-                  className={`${eventStyles.actionBtn} ${activeTab === 'Analytics' ? eventStyles.activeEditBtn : ''}`}
-                  onClick={() => setActiveTab('Analytics')}
-                  style={{ fontSize: '16px', padding: '10px 25px' }}
-                >
-                  Analytics
-                </button>
-                <button 
-                  className={`${eventStyles.actionBtn} ${activeTab === 'Account' ? eventStyles.activeEditBtn : ''}`}
-                  onClick={() => setActiveTab('Account')}
-                  style={{ fontSize: '16px', padding: '10px 25px' }}
-                >
-                  Account
-                </button>
-              </div>
+              ))}
             </div>
-            {message ? (
-              <div className={`${profileStyles.message} ${messageType === 'error' ? profileStyles.error : profileStyles.success}`}>
+
+            {/* Message Alert */}
+            {message && (
+              <div className={`${profileStyles.message} ${messageType === 'error' ? profileStyles.messageError : profileStyles.messageSuccess}`}>
                 {message}
               </div>
-            ) : null}
+            )}
 
-            {activeTab === 'Preferences' && (
-              <>
-                <section style={{ display: 'flex', gap: '20px', flex: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                  <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                    <div style={{ width: '100%' }}>
-                      <h3 style={{ color: '#2C3E50', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}><FaUserEdit /> Profile</h3>
-                      <div className={profileStyles.option_group}>
-                        <span className={profileStyles.option_label}>Display Name</span>
+            {/* Tab Content */}
+            <div className={profileStyles.tabContent}>
+              {activeTab === 'Preferences' && (
+                <>
+                  <div className={profileStyles.cardGrid}>
+                    <div className={profileStyles.card}>
+                      <h3><FaUserEdit /> Profile Information</h3>
+                      <div className={profileStyles.optionGroup}>
+                        <label className={profileStyles.optionLabel}>Display Name</label>
                         <input
                           type="text"
                           value={fullName}
                           onChange={(e) => setFullName(e.target.value)}
                           className={profileStyles.profileInput}
-                          placeholder="Your name"
+                          placeholder="Your full name"
                         />
                       </div>
-                      <h3 style={{ color: '#2C3E50', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', marginTop: '30px', marginBottom: '20px' }}><FaCloud /> Travel Style</h3>
-                      <OptionSelect 
-                        label="Environment"
-                        options={['Indoor', 'Outdoor', 'Both']}
-                        selected={environment}
-                        onSelect={setEnvironment}
-                      />
-                      <OptionSelect 
-                        label="Pace"
-                        options={['Relaxed', 'Moderate', 'Fast-paced']}
-                        selected={pace}
-                        onSelect={setPace}
-                      />
                     </div>
-                  </div>
 
-                  <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                    <div style={{ width: '100%' }}>
-                      <h3 style={{ color: '#2C3E50', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}><FaDollarSign /> Budget Level</h3>
-                      <div className={profileStyles.options_container}>
-                        {[1, 2, 3, 4, 5].map(level => (
-                          <button
-                            type="button"
-                            key={level}
-                            className={`${profileStyles.option_btn} ${budget === level ? profileStyles.option_active : ''}`}
-                            onClick={() => setBudget(level)}
-                            style={{ fontSize: '18px', padding: '10px 15px', flex: '1', minWidth: '40px' }}
-                          >
-                            {'$'.repeat(level)}
-                          </button>
-                        ))}
-                      </div>
-                      <div style={{ marginTop: '15px', fontSize: '15px', color: 'var(--text-muted)', textAlign: 'center', fontWeight: '600' }}>
-                        {budget === 1 && "Budget-friendly ($)"}
-                        {budget === 2 && "Affordable ($$)"}
-                        {budget === 3 && "Moderate ($$$)"}
-                        {budget === 4 && "Premium ($$$$)"}
-                        {budget === 5 && "Luxury ($$$$$)"}
-                      </div>
-                    </div>
-                  </div>
-                </section>
-                <div className={profileStyles.settings_button_container}>
-                  <button className={profileStyles.settings_button} type="button" onClick={handleSaveProfile} disabled={saving}>
-                    {saving ? 'Saving...' : 'Save Preferences'}
-                  </button>
-                  <button 
-                    className={profileStyles.settings_button} 
-                    type="button" 
-                    onClick={handleLogout}
-                    style={{ background: 'transparent', color: '#e74c3c', border: '2px solid #e74c3c', boxShadow: 'none' }}
-                    onMouseOver={(e) => { e.currentTarget.style.background = '#e74c3c'; e.currentTarget.style.color = '#fff'; }}
-                    onMouseOut={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#e74c3c'; }}
-                  >
-                    <FaSignOutAlt /> Log Out
-                  </button>
-                </div>
-              </>
-            )}
-            
-            {activeTab === 'Itineraries' && (
-              <section style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                  <div style={{ width: '100%' }}>
-                    <h3 style={{ color: '#2C3E50', fontSize: '18px', marginBottom: '20px' }}>Saved Itineraries</h3>
-                    <div className={profileStyles.list_container}>
-                      {userData?.saved_itineraries?.map(itinerary => (
-                        <div key={itinerary.id} className={profileStyles.list_item}>
-                          <h4 style={{ margin: '0 0 4px' }}>{itinerary.name}</h4>
-                          <span className={profileStyles.meta_text}>{itinerary.date}</span>
+                    <div className={profileStyles.card}>
+                      <h3><FaCloud /> Travel Preferences</h3>
+                      <div className={profileStyles.optionGroup}>
+                        <label className={profileStyles.optionLabel}>Environment</label>
+                        <div className={profileStyles.optionsContainer}>
+                          {['Indoor', 'Outdoor', 'Both'].map(opt => (
+                            <button
+                              key={opt}
+                              type="button"
+                              className={`${profileStyles.optionBtn} ${environment === opt ? profileStyles.optionActive : ''}`}
+                              onClick={() => setEnvironment(opt)}
+                            >
+                              {opt}
+                            </button>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                  <div style={{ width: '100%' }}>
-                    <h3 style={{ color: '#2C3E50', fontSize: '18px', marginBottom: '20px' }}>Favorite Locations</h3>
-                    <div className={profileStyles.list_container}>
-                      {userData?.saved_locations?.map(location => (
-                        <div key={location.id} className={profileStyles.list_item}>
-                          <h4 style={{ margin: '0 0 4px' }}>{location.name}</h4>
-                          <span className={profileStyles.meta_text}>{location.type}</span>
+                      </div>
+                      <div className={profileStyles.optionGroup}>
+                        <label className={profileStyles.optionLabel}>Pace</label>
+                        <div className={profileStyles.optionsContainer}>
+                          {['Relaxed', 'Moderate', 'Fast-paced'].map(opt => (
+                            <button
+                              key={opt}
+                              type="button"
+                              className={`${profileStyles.optionBtn} ${pace === opt ? profileStyles.optionActive : ''}`}
+                              onClick={() => setPace(opt)}
+                            >
+                              {opt}
+                            </button>
+                          ))}
                         </div>
-                      ))}
+                      </div>
+                    </div>
+
+                    <div className={profileStyles.card}>
+                      <h3>💰 Trip Budget (PHP)</h3>
+                      <div className={profileStyles.optionGroup}>
+                        <label className={profileStyles.optionLabel}>Budget Amount</label>
+                        <div className={profileStyles.budgetInputGroup}>
+                          <span className={profileStyles.currencySymbol}>₱</span>
+                          <input
+                            type="number"
+                            value={budgetPhp}
+                            onChange={(e) => setBudgetPhp(Number(e.target.value))}
+                            className={profileStyles.budgetInput}
+                            placeholder="5000"
+                            min="0"
+                            step="500"
+                          />
+                        </div>
+                        <small className={profileStyles.budgetHelper}>
+                          Recommended: ₱5,000 - ₱50,000 for day trips; ₱20,000+ for multi-day
+                        </small>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={profileStyles.actionButtons}>
+                    <button 
+                      className={profileStyles.primaryBtn}
+                      onClick={handleSaveProfile}
+                      disabled={saving}
+                    >
+                      {saving ? 'Saving...' : 'Save Preferences'}
+                    </button>
+                    <button
+                      className={profileStyles.logoutBtn}
+                      onClick={handleLogout}
+                    >
+                      <FaSignOutAlt /> Log Out
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'Itineraries & Locations' && (
+                <div className={profileStyles.cardGrid}>
+                  <div className={profileStyles.card}>
+                    <h3><FaCalendarAlt /> Saved Itineraries ({itineraries.length})</h3>
+                    <div className={profileStyles.listContainer}>
+                      {itineraries.length === 0 ? (
+                        <EmptyState
+                          icon={FaCalendarAlt}
+                          title="No itineraries yet"
+                          description="Create your first trip plan from the Plan page"
+                        />
+                      ) : (
+                        itineraries.map(itin => (
+                          <ItineraryItem
+                            key={itin.id}
+                            itinerary={itin}
+                            onDelete={handleDeleteItinerary}
+                            isDeleting={deletingItineraryId === itin.id}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={profileStyles.card}>
+                    <h3><FaMapMarkerAlt /> Favorite Locations ({locations.length})</h3>
+                    <div className={profileStyles.listContainer}>
+                      {locations.length === 0 ? (
+                        <EmptyState
+                          icon={FaMapMarkerAlt}
+                          title="No saved locations"
+                          description="Mark your favorite places while planning trips"
+                        />
+                      ) : (
+                        locations.map(loc => (
+                          <LocationItem
+                            key={loc.id}
+                            location={loc}
+                            onDelete={handleDeleteLocation}
+                            isDeleting={deletingLocationId === loc.id}
+                          />
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
-              </section>
-            )}
+              )}
 
-            {activeTab === 'Analytics' && (
-              <section style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                  <div style={{ width: '100%' }}>
-                    <h3 style={{ color: '#2C3E50', fontSize: '18px', marginBottom: '20px' }}>Travel Analytics</h3>
-                    <div className={profileStyles.analytics_grid}>
-                      <div className={profileStyles.stat_box}>
-                        <span className={profileStyles.stat_value}>{userData?.analytics?.trips_taken || 0}</span>
-                        <span className={profileStyles.stat_label}>Trips Taken</span>
-                      </div>
-                      <div className={profileStyles.stat_box}>
-                        <span className={profileStyles.stat_value}>{userData?.analytics?.places_visited || 0}</span>
-                        <span className={profileStyles.stat_label}>Places Visited</span>
-                      </div>
-                      <div className={profileStyles.stat_box}>
-                        <span className={profileStyles.stat_value_text}>{userData?.analytics?.most_visited || 'N/A'}</span>
-                        <span className={profileStyles.stat_label}>Most Visited City</span>
-                      </div>
+              {activeTab === 'Analytics' && (
+                <div className={profileStyles.card}>
+                  <h3>📊 Travel Analytics</h3>
+                  <div className={profileStyles.analyticsGrid}>
+                    <div className={profileStyles.statBox}>
+                      <span className={profileStyles.statValue}>{analytics.trips_taken}</span>
+                      <span className={profileStyles.statLabel}>Trips Taken</span>
+                    </div>
+                    <div className={profileStyles.statBox}>
+                      <span className={profileStyles.statValue}>{analytics.places_visited}</span>
+                      <span className={profileStyles.statLabel}>Places Visited</span>
+                    </div>
+                    <div className={profileStyles.statBox}>
+                      <span className={profileStyles.statValue}>{analytics.most_visited_city || 'N/A'}</span>
+                      <span className={profileStyles.statLabel}>Most Visited City</span>
                     </div>
                   </div>
                 </div>
-              </section>
-            )}
+              )}
 
-            {activeTab === 'Account' && (
-              <section style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                  <div style={{ width: '100%' }}>
-                    <h3 style={{ color: '#2C3E50', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>{themeMode === 'dark' ? <FaMoon /> : <FaSun />} Theme</h3>
+              {activeTab === 'Account' && (
+                <div className={profileStyles.cardGrid}>
+                  <div className={profileStyles.card}>
+                    <h3>{themeMode === 'dark' ? <FaMoon /> : <FaSun />} Theme</h3>
                     <div className={profileStyles.segmented}>
                       <button
                         type="button"
@@ -478,9 +599,9 @@ const ProfilePage = () => {
                         Dark Mode
                       </button>
                     </div>
-                    <div className={profileStyles.toggle_item} style={{ marginTop: '30px' }}>
-                      <span style={{ fontWeight: 600, color: '#2C3E50' }}>Email updates</span>
-                      <label className={profileStyles.toggle_switch}>
+                    <div className={profileStyles.toggleItem}>
+                      <span>Email updates</span>
+                      <label className={profileStyles.toggleSwitch}>
                         <input
                           type="checkbox"
                           checked={emailUpdates}
@@ -490,13 +611,11 @@ const ProfilePage = () => {
                       </label>
                     </div>
                   </div>
-                </div>
 
-                <div className={eventStyles.eventCard} style={{ flex: '1 1 400px', padding: '30px' }}>
-                  <div style={{ width: '100%' }}>
-                    <h3 style={{ color: '#2C3E50', fontSize: '18px', marginBottom: '20px' }}>Security</h3>
-                    <div className={profileStyles.option_group}>
-                      <span className={profileStyles.option_label}>New Password</span>
+                  <div className={profileStyles.card}>
+                    <h3>🔐 Security</h3>
+                    <div className={profileStyles.optionGroup}>
+                      <label className={profileStyles.optionLabel}>New Password</label>
                       <input
                         type="password"
                         value={newPassword}
@@ -505,21 +624,28 @@ const ProfilePage = () => {
                         placeholder="At least 6 characters"
                       />
                     </div>
-                    <div className={profileStyles.actionGroup} style={{ marginTop: '30px' }}>
-                      <button type="button" className={profileStyles.secondaryBtn} onClick={handleChangePassword} disabled={securityLoading}>
+                    <div className={profileStyles.actionButtons}>
+                      <button
+                        type="button"
+                        className={profileStyles.secondaryBtn}
+                        onClick={handleChangePassword}
+                        disabled={securityLoading}
+                      >
                         Update Password
                       </button>
-                      <button type="button" className={profileStyles.secondaryBtn} onClick={handleLogout}>
-                        <FaSignOutAlt /> Log Out
-                      </button>
-                      <button type="button" className={profileStyles.dangerBtn} onClick={handleDeleteAccount} disabled={securityLoading}>
+                      <button
+                        type="button"
+                        className={profileStyles.dangerBtn}
+                        onClick={handleDeleteAccount}
+                        disabled={securityLoading}
+                      >
                         <FaTrashAlt /> Delete Account
                       </button>
                     </div>
                   </div>
                 </div>
-              </section>
-            )}
+              )}
+            </div>
           </div>
         </main>
       </div>

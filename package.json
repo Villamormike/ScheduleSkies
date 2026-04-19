@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.102.1",
+    "@tomtom-international/web-sdk-maps": "^6.25.0",
+    "@tomtom-international/web-sdk-services": "^6.25.0",
     "axios": "^1.6.0",
     "leaflet": "^1.9.4",
     "next": "^16.1.6",
@@ -17,7 +19,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.12.0",
-    "react-leaflet": "^4.2.1"
+    "react-leaflet": "^4.2.1",
+    "supabase": "^2.91.3"
   },
   "devDependencies": {
     "@types/react": "19.2.14",

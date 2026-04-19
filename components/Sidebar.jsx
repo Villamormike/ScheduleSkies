@@ -32,22 +32,22 @@ export default function Sidebar() {
         <ul>
           <li>
             <Link href="/">
-              <FaHome />
+              <img src="/images/home-btn.png" />
             </Link>
           </li>
           <li>
             <Link href="/plan">
-              <FaCalendarAlt />
+              <img src="/images/events-btn.png" />
             </Link>
           </li>
           <li>
             <Link href="/map">
-              <FaMap />
+              <img src="/images/map-btn.png" />
             </Link>
           </li>
           <li>
             <Link href="/profile">
-              <FaUser />
+              <img src="/images/profile-btn.png" />
             </Link>
           </li>
         </ul>
