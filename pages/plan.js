@@ -14,6 +14,104 @@ const MyEvents = () => {
   const [eventData, setEventData] = useState([]);
   const [userId, setUserId] = useState(null);
   const router = useRouter();
+  const [draggingEventId, setDraggingEventId] = useState(null);
+  const [dragOverDate, setDragOverDate] = useState(null);
+
+  const isPastDate = (dateStr) => {
+    if (!dateStr) return false;
+    const parsed = new Date(dateStr);
+    if (Number.isNaN(parsed.getTime())) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    parsed.setHours(0, 0, 0, 0);
+    return parsed < today;
+  };
+
+  const formatDateInfo = (dateStr) => {
+    if (!dateStr) return { dayOfWeek: '', formattedDate: '' };
+    const dateObj = new Date(dateStr);
+    if (Number.isNaN(dateObj.getTime())) return { dayOfWeek: '', formattedDate: '' };
+    return {
+      dayOfWeek: dateObj.toLocaleDateString('en-US', { weekday: 'long' }),
+      formattedDate: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    };
+  };
+
+  const formatTimeDisplay = (timeStr) => {
+    if (!timeStr) return '';
+    const sanitized = timeStr.length === 8 ? timeStr : timeStr.slice(0, 5);
+    const parsed = new Date(`1970-01-01T${sanitized}`);
+    if (Number.isNaN(parsed.getTime())) return timeStr;
+    return parsed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const parseEventDateTime = (event) => {
+    if (!event?.date) return null;
+    const time = event.time ? event.time.slice(0, 5) : '00:00';
+    const iso = `${event.date}T${time}`;
+    const parsed = new Date(iso);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  const sortEvents = (events) => {
+    return [...events].sort((a, b) => {
+      const aDate = parseEventDateTime(a);
+      const bDate = parseEventDateTime(b);
+      if (aDate && bDate) return aDate - bDate;
+      if (aDate) return -1;
+      if (bDate) return 1;
+      return a.title.localeCompare(b.title);
+    });
+  };
+
+  const markConflicts = (events) => {
+    const normalized = events.map(e => ({ ...e, conflict: false }));
+    const groupedByDate = normalized.reduce((acc, event) => {
+      if (!event.date) return acc;
+      acc[event.date] = acc[event.date] || [];
+      acc[event.date].push(event);
+      return acc;
+    }, {});
+
+    Object.values(groupedByDate).forEach(dayEvents => {
+      const sortedDayEvents = [...dayEvents].sort((a, b) => {
+        const aTime = a.time ? a.time.slice(0, 5) : '';
+        const bTime = b.time ? b.time.slice(0, 5) : '';
+        return aTime.localeCompare(bTime);
+      });
+      for (let i = 0; i < sortedDayEvents.length - 1; i += 1) {
+        const current = sortedDayEvents[i];
+        const next = sortedDayEvents[i + 1];
+        if (current.time && next.time && current.time.slice(0, 5) === next.time.slice(0, 5)) {
+          current.conflict = true;
+          next.conflict = true;
+        }
+      }
+    });
+
+    return normalized;
+  };
+
+  const normalizeEvents = (events) => {
+    const enriched = events.map(generateDynamicProps);
+    const conflictMarked = markConflicts(enriched);
+    return sortEvents(conflictMarked).map(event => {
+      const categoryStyle = event.category === 'SightSeeing' ? styles.sightseeing
+        : event.category === 'Hotel' ? styles.hotel
+        : event.category === 'Leisure' ? styles.leisure
+        : styles.foodGreen;
+      const tags = [
+        { label: event.category || 'Uncategorized', styleClass: categoryStyle },
+        ...(event.completed ? [{ label: 'Completed', styleClass: styles.completed }] : []),
+        ...(event.conflict ? [{ label: 'Conflict', styleClass: styles.conflict }] : [])
+      ];
+      return {
+        ...event,
+        tags,
+        typeColor: event.conflict ? '#FF0000' : event.typeColor
+      };
+    });
+  };
 
   const generateDynamicProps = (event) => {
     let styleClass = styles.foodGreen;
@@ -22,11 +120,19 @@ const MyEvents = () => {
     if (event.category === 'Hotel') { styleClass = styles.hotel; typeColor = '#4A9FBB'; }
     if (event.category === 'Leisure') { styleClass = styles.leisure; typeColor = '#21B694'; }
 
+    const { dayOfWeek } = formatDateInfo(event.date);
+    const completed = isPastDate(event.date);
+
     return {
       ...event,
       typeColor,
+      dayOfWeek,
+      displayTime: formatTimeDisplay(event.time),
+      completed,
+      conflict: false,
       tags: [
-        { label: event.category, styleClass: styleClass }
+        { label: event.category || 'Uncategorized', styleClass },
+        ...(completed ? [{ label: 'Completed', styleClass: styles.completed }] : [])
       ]
     };
   };
@@ -34,7 +140,7 @@ const MyEvents = () => {
   const fetchEvents = async () => {
     const { data, error } = await supabase.from('events').select('*').order('date', { ascending: true });
     if (data && !error) {
-      setEventData(data.map(generateDynamicProps));
+      setEventData(normalizeEvents(data));
     }
   };
 
@@ -1034,6 +1140,13 @@ const MyEvents = () => {
                   <input type="date" value={formData.date} onChange={e => setFormData({ ...formData, date: e.target.value })} />
                 </div>
                 <div className={styles.formGroup}>
+                  <label>Time</label>
+                  <input required type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} />
+                  {formData.time && (
+                    <span style={{ fontSize: '12px', color: '#64748b', marginTop: '6px' }}>{formatTimeDisplay(formData.time)}</span>
+                  )}
+                </div>
+                <div className={styles.formGroup}>
                   <label>Category</label>
                   <select value={formData.category} onChange={e => setFormData({ ...formData, category: e.target.value })}>
                     {formCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
@@ -1342,12 +1455,34 @@ const MyEvents = () => {
                 const dateStr = `${currentYear}-${monthStr}-${dayStr}`;
                 const dayEvents = eventData.filter(e => e.date === dateStr);
                 const hasEvent = dayEvents.length > 0;
+                const cellHighlight = dragOverDate === dateStr;
                 return (
-                  <div key={day} className={styles.calCell} style={hasEvent ? { backgroundColor: 'rgba(94, 224, 147, 0.1)', border: '1px solid #5EE093' } : {}}>
+                  <div
+                    key={day}
+                    className={styles.calCell}
+                    style={{
+                      ...(hasEvent ? { backgroundColor: 'rgba(94, 224, 147, 0.1)', border: '1px solid #5EE093' } : {}),
+                      ...(cellHighlight ? { outline: '2px dashed #76b5d9', backgroundColor: '#eef8ff' } : {})
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDragEnter={() => setDragOverDate(dateStr)}
+                    onDragLeave={() => setDragOverDate(null)}
+                    onDrop={(e) => handleCalendarDrop(e, dateStr)}
+                  >
                     <span className={styles.calDayNum} style={hasEvent ? { fontWeight: 'bold', color: '#2C3E50' } : {}}>{day}</span>
                     <div className={styles.calEventsContainer}>
                       {dayEvents.map(ev => (
-                        <div key={ev.id} className={styles.calEventPill} style={{ backgroundColor: ev.typeColor }}>
+                        <div
+                          key={ev.id}
+                          className={styles.calEventPill}
+                          style={{ backgroundColor: ev.typeColor, cursor: 'grab' }}
+                          draggable
+                          onDragStart={(e) => handleDragStart(e, ev.id)}
+                          onDragEnd={() => setDraggingEventId(null)}
+                        >
+                          <div style={{ fontSize: '11px', lineHeight: 1.2, marginBottom: '4px', fontWeight: 700 }}>
+                            {ev.displayTime || ev.time || 'No time'}
+                          </div>
                           {ev.title}
                         </div>
                       ))}
